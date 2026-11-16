@@ -45,6 +45,7 @@ using static libfintx.FinTS.HKKAZ;
 using static libfintx.FinTS.HKPPD;
 using static libfintx.FinTS.HKSAL;
 using static libfintx.FinTS.HKWPD;
+using static libfintx.FinTS.HKWDU;
 using static libfintx.FinTS.HKSYN;
 using static libfintx.FinTS.HKTAB;
 using static libfintx.FinTS.INI;
@@ -79,6 +80,11 @@ namespace libfintx.FinTS
         public static async Task<String> HKWPD(FinTsClient client, string touchdownPoint)
         {
             return await Init_HKWPD(client, touchdownPoint);
+        }
+
+        public static async Task<String> HKWDU(FinTsClient client, string fromDate, string toDate, string touchdownPoint)
+        {
+            return await Init_HKWDU(client, fromDate, toDate, touchdownPoint);
         }
 
         public static async Task<String> HKKAZ(FinTsClient client, string FromDate, string ToDate, string Startpoint)

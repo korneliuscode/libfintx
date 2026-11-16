@@ -82,6 +82,8 @@ namespace libfintx.FinTS
         internal int HISALS { get; set; }
         /// <summary>The HKWPD version for the securities statement: the highest of 5 and 6 the bank offers, 0 for none.</summary>
         internal int HIWPDS { get; set; }
+        /// <summary>The HKWDU version for the securities transactions: 5 when the bank offers it, 0 for none.</summary>
+        internal int HIWDUS { get; set; }
         internal int HIKAZS { get; set; }
         internal int HICAZS => 1;
         public string HICAZS_Camt { get; set; }

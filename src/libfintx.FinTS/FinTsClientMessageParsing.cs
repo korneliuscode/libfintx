@@ -271,6 +271,10 @@ public partial class FinTsClient
                 this.HIWPDS = segment.Version;
         }
 
+        // libfintx builds the securities transactions request in version 5, the one of FinTS 3.0.
+        if (segment.Name == "HIWDUS" && segment.Version == 5)
+            this.HIWDUS = segment.Version;
+
         if (segment.Name == "HITANS")
         {
             var hitans = (HITANS) segment;

@@ -34,6 +34,8 @@ Look at the demo projects inside the master branch.
 
 * Get Balance (**HKSAL**)
 * Request Transactions (**HKKAZ**)
+* Get securities holdings (**HKWPD**)
+* Request securities transactions (**HKWDU**)
 * Transfer money (**HKCCS**)
 * Transfer money at a certain time (**HKCCS**)
 * Collective transfer money (**HKCCM**)
