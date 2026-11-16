@@ -22,6 +22,7 @@
  */
 
 
+using System;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -73,11 +74,60 @@ namespace libfintx.FinTS
             return result.TypedResult(new MT535Parser(_loggerFactory).Parse(mt535.ToString()));
         }
 
+        /// <summary>
+        /// The securities transactions (Depotumsätze) of the client's account in the period, with
+        /// quantities, amounts and prices as the bank reports them. Fetches all parts of a long
+        /// statement. Without dates the bank chooses the period. Fails with a message when the
+        /// bank offers no securities transactions in version 5.
+        /// </summary>
+        public async Task<HBCIDialogResult<MT536>> SecuritiesTransactions(TANDialog tanDialog, DateTime? startDate = null, DateTime? endDate = null)
+        {
+            var result = await InitializeConnection();
+            if (result.HasError)
+                return result.TypedResult<MT536>();
+
+            result = await ProcessSCA(result, tanDialog);
+            if (result.HasError || result.IsAuthenticationPending)
+                return result.TypedResult<MT536>();
+
+            if (HIWDUS == 0)
+                return new HBCIDialogResult<MT536>(
+                    new[] { new HBCIBankMessage("9000", "Die Bank bietet keine Depotumsätze (HKWDU) an.") }, null);
+
+            string startDateStr = startDate?.ToString("yyyyMMdd");
+            string endDateStr = endDate?.ToString("yyyyMMdd");
+
+            var mt536 = new StringBuilder();
+            string touchdown = null;
+            do
+            {
+                string bankCode = await Transaction.HKWDU(this, startDateStr, endDateStr, touchdown);
+                result = new HBCIDialogResult(Parse_BankCode(bankCode), bankCode);
+                if (result.HasError)
+                    return result.TypedResult<MT536>();
+
+                result = await ProcessSCA(result, tanDialog);
+                if (result.HasError || result.IsAuthenticationPending)
+                    return result.TypedResult<MT536>();
+
+                mt536.Append(SwiftOf(result.RawData, "HIWDU"));
+                touchdown = result.RawData.Contains("+3040::") ? Parse_Transactions_Startpoint(result.RawData) : null;
+                if (touchdown != null)
+                    Parse_Message(result.RawData);
+            }
+            while (!string.IsNullOrEmpty(touchdown));
+
+            return result.TypedResult(new MT536Parser(_loggerFactory).Parse(mt536.ToString()));
+        }
+
         /// <summary>The MT535 text in the HIWPD segments of a response, read by its binary length.</summary>
-        internal static string Mt535Of(string response)
+        internal static string Mt535Of(string response) => SwiftOf(response, "HIWPD");
+
+        /// <summary>The SWIFT text in the given answer segments of a response, read by its binary length.</summary>
+        internal static string SwiftOf(string response, string segment)
         {
             var text = new StringBuilder();
-            foreach (Match match in Regex.Matches(response ?? string.Empty, @"HIWPD:\d+:\d+(?::\d+)?\+@(\d+)@"))
+            foreach (Match match in Regex.Matches(response ?? string.Empty, segment + @":\d+:\d+(?::\d+)?\+@(\d+)@"))
             {
                 int start = match.Index + match.Length;
                 int length = int.Parse(match.Groups[1].Value);

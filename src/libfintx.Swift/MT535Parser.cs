@@ -25,7 +25,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
@@ -41,10 +40,7 @@ namespace libfintx.Swift;
 /// </summary>
 public class MT535Parser
 {
-    private readonly ILogger<MT535Parser>? _logger;
-
-    /// <summary>SWIFT amounts always use a decimal comma and no thousands separator, independent of the current culture.</summary>
-    private static readonly NumberFormatInfo AmountFormat = NumberFormatInfo.ReadOnly(new NumberFormatInfo { NumberDecimalSeparator = ",", NumberGroupSeparator = "" });
+    private readonly SwiftFieldReader _reader;
 
     private static readonly Regex Isin = new Regex(@"^ISIN\s+([A-Z]{2}[A-Z0-9]{9}[0-9])", RegexOptions.Compiled);
     private static readonly Regex Wkn = new Regex(@"^/DE/([A-Z0-9]{6})", RegexOptions.Compiled);
@@ -73,7 +69,7 @@ public class MT535Parser
     /// <param name="loggerFactory">A logging factory to create the logging where to write warnings.</param>
     public MT535Parser(ILoggerFactory? loggerFactory = null)
     {
-        _logger = loggerFactory?.CreateLogger<MT535Parser>();
+        _reader = new SwiftFieldReader(loggerFactory?.CreateLogger<MT535Parser>(), "MT535");
     }
 
     /// <summary>Reads the statement; text that holds no statement gives an empty one.</summary>
@@ -81,14 +77,14 @@ public class MT535Parser
     {
         var statement = new MT535();
         MT535Holding? current = null;
-        foreach (string field in Fields(mt535 ?? string.Empty))
+        foreach (string field in SwiftFieldReader.Fields(mt535 ?? string.Empty))
         {
-            if (IsBlock(field, ":16R:FIN"))
+            if (SwiftFieldReader.IsBlock(field, ":16R:FIN"))
             {
                 current = new MT535Holding();
                 continue;
             }
-            if (IsBlock(field, ":16S:FIN"))
+            if (SwiftFieldReader.IsBlock(field, ":16S:FIN"))
             {
                 if (current != null)
                     statement.Holdings.Add(current);
@@ -100,9 +96,9 @@ public class MT535Parser
             if (current == null)
             {
                 if ((m = StatementDate.Match(field)).Success)
-                    statement.StatementDate = Date(m.Groups[2].Value, field)?.Date;
+                    statement.StatementDate = _reader.Date(m.Groups[2].Value, field)?.Date;
                 else if ((m = PreparationDate.Match(field)).Success)
-                    statement.PreparationDate = Date(m.Groups[2].Value, field);
+                    statement.PreparationDate = _reader.Date(m.Groups[2].Value, field);
                 else if ((m = Reference.Match(field)).Success)
                     statement.Reference = m.Groups[1].Value.Trim();
                 else if ((m = Page.Match(field)).Success)
@@ -118,7 +114,7 @@ public class MT535Parser
                     statement.HasHoldings = m.Groups[1].Value == "Y";
                 else if ((m = HoldValue.Match(field)).Success)
                 {
-                    statement.TotalValue = Amount(m.Groups[3].Value, m.Groups[1].Value == "N", field);
+                    statement.TotalValue = _reader.Amount(m.Groups[3].Value, m.Groups[1].Value == "N", field);
                     statement.TotalValueCurrency = m.Groups[2].Value;
                 }
                 continue;
@@ -143,115 +139,54 @@ public class MT535Parser
             else if ((m = Quantity.Match(field)).Success)
             {
                 current.IsNominal = m.Groups[1].Value == "FAMT";
-                current.Quantity = Amount(m.Groups[3].Value, m.Groups[2].Value == "N", field) ?? 0m;
+                current.Quantity = _reader.Amount(m.Groups[3].Value, m.Groups[2].Value == "N", field) ?? 0m;
             }
             else if ((m = Available.Match(field)).Success)
-                current.AvailableQuantity = Amount(m.Groups[2].Value, m.Groups[1].Value == "N", field);
+                current.AvailableQuantity = _reader.Amount(m.Groups[2].Value, m.Groups[1].Value == "N", field);
             else if ((m = PriceAmount.Match(field)).Success)
             {
                 current.PriceType = m.Groups[1].Value;
                 current.PriceCurrency = m.Groups[2].Value;
-                current.Price = Amount(m.Groups[3].Value, false, field);
+                current.Price = _reader.Amount(m.Groups[3].Value, false, field);
                 current.PriceIsPercent = false;
             }
             else if ((m = PricePercent.Match(field)).Success)
             {
                 current.PriceType = m.Groups[1].Value;
-                current.Price = Amount(m.Groups[3].Value, m.Groups[2].Value == "N", field);
+                current.Price = _reader.Amount(m.Groups[3].Value, m.Groups[2].Value == "N", field);
                 current.PriceIsPercent = true;
             }
             else if ((m = PriceDate.Match(field)).Success)
-                current.PriceDate = Date(m.Groups[2].Value, field)?.Date;
+                current.PriceDate = _reader.Date(m.Groups[2].Value, field)?.Date;
             else if ((m = PriceSource.Match(field)).Success)
                 current.PriceSource = m.Groups[1].Value.Trim();
             else if ((m = HoldValue.Match(field)).Success)
             {
-                current.Value = Amount(m.Groups[3].Value, m.Groups[1].Value == "N", field);
+                current.Value = _reader.Amount(m.Groups[3].Value, m.Groups[1].Value == "N", field);
                 current.ValueCurrency = m.Groups[2].Value;
             }
             else if ((m = Accrued.Match(field)).Success)
             {
-                current.AccruedInterest = Amount(m.Groups[3].Value, m.Groups[1].Value == "N", field);
+                current.AccruedInterest = _reader.Amount(m.Groups[3].Value, m.Groups[1].Value == "N", field);
                 current.AccruedInterestCurrency = m.Groups[2].Value;
             }
             else if ((m = Exchange.Match(field)).Success)
             {
                 current.ExchangeRateCurrencies = m.Groups[1].Value + "/" + m.Groups[2].Value;
-                current.ExchangeRate = Amount(m.Groups[3].Value, false, field);
+                current.ExchangeRate = _reader.Amount(m.Groups[3].Value, false, field);
             }
             else if ((m = Acquisition.Match(field)).Success)
             {
-                current.AcquisitionPrice = Amount(m.Groups[1].Value, false, field);
+                current.AcquisitionPrice = _reader.Amount(m.Groups[1].Value, false, field);
                 current.AcquisitionPriceCurrency = m.Groups[2].Value;
             }
             else if ((m = Denomination.Match(field)).Success)
                 current.Denomination = m.Groups[1].Value;
             else if ((m = Maturity.Match(field)).Success)
-                current.MaturityDate = Date(m.Groups[1].Value, field);
+                current.MaturityDate = _reader.Date(m.Groups[1].Value, field);
             else if ((m = Interest.Match(field)).Success)
-                current.InterestRate = Amount(m.Groups[2].Value, m.Groups[1].Value == "N", field);
+                current.InterestRate = _reader.Amount(m.Groups[2].Value, m.Groups[1].Value == "N", field);
         }
         return statement;
-    }
-
-    // ":16R:FIN" opens an instrument, ":16R:FINA" (if a bank sends one) does not.
-    private static bool IsBlock(string field, string tag) =>
-        field.StartsWith(tag, StringComparison.Ordinal) && (field.Length == tag.Length || !char.IsLetter(field[tag.Length]));
-
-    /// <summary>
-    /// The fields of the message, each starting with ":"; continuation lines are joined to their
-    /// field with "|". A line "-" ends a message.
-    /// </summary>
-    private static IEnumerable<string> Fields(string text)
-    {
-        string? current = null;
-        foreach (string raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
-        {
-            string line = raw.TrimEnd();
-            if (line.Length == 0)
-                continue;
-            if (line.StartsWith(":", StringComparison.Ordinal))
-            {
-                if (current != null)
-                    yield return current;
-                current = line;
-            }
-            else if (line.StartsWith("-", StringComparison.Ordinal))
-            {
-                if (current != null)
-                    yield return current;
-                current = null;
-            }
-            else if (current != null)
-                current += "|" + line;
-        }
-        if (current != null)
-            yield return current;
-    }
-
-    // SWIFT amounts use a comma as decimal mark and may end with it ("100,"). An amount that
-    // cannot be read is skipped and logged.
-    private decimal? Amount(string swift, bool negative, string field)
-    {
-        string text = swift.TrimEnd(',');
-        if (text.Length == 0)
-            text = "0";
-        if (!decimal.TryParse(text, NumberStyles.AllowDecimalPoint, AmountFormat, out decimal value))
-        {
-            _logger?.LogWarning("MT535: amount \"{Amount}\" in field {Field} cannot be read and is skipped.", swift, field);
-            return null;
-        }
-        return negative ? -value : value;
-    }
-
-    // A date (yyyyMMdd) or a date with time (yyyyMMddHHmmss); a date that cannot be read is skipped and logged.
-    private DateTime? Date(string text, string field)
-    {
-        string format = text.Length >= 14 ? "yyyyMMddHHmmss" : "yyyyMMdd";
-        string value = text.Length >= 14 ? text.Substring(0, 14) : text.Substring(0, 8);
-        if (DateTime.TryParseExact(value, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime date))
-            return date;
-        _logger?.LogWarning("MT535: date \"{Date}\" in field {Field} cannot be read and is skipped.", text, field);
-        return null;
     }
 }
