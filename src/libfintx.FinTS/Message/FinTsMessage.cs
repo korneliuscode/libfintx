@@ -26,6 +26,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using libfintx.FinTS.Data;
 using libfintx.FinTS.Exceptions;
@@ -837,6 +838,12 @@ namespace libfintx.FinTS.Message
         }
 
         /// <summary>
+        /// How long the bank may take to answer a message. HttpWebRequest.Timeout only applies to
+        /// the synchronous calls, so the asynchronous send aborts the request itself.
+        /// </summary>
+        internal static TimeSpan ResponseTimeout = TimeSpan.FromSeconds(100);
+
+        /// <summary>
         /// Send FinTS message async
         /// </summary>
         /// <param name="client"></param>
@@ -853,25 +860,31 @@ namespace libfintx.FinTS.Message
                 byte[] data = Encoding.ASCII.GetBytes(Helper.EncodeTo64(Message));
 
                 req.Method = "POST";
-                req.Timeout = 10000;
                 req.ContentType = "application/octet-stream";
                 req.ContentLength = data.Length;
                 req.KeepAlive = false;
 
-                using (var reqStream = await req.GetRequestStreamAsync())
+                using (var timeout = new CancellationTokenSource(ResponseTimeout))
+                using (timeout.Token.Register(() => req.Abort()))
                 {
-                    await reqStream.WriteAsync(data, 0, data.Length);
-                    await reqStream.FlushAsync();
-                }
-
-                using (var res = (HttpWebResponse) await req.GetResponseAsync())
-                {
-                    using (var resStream = res.GetResponseStream())
+                    try
                     {
+                        using (var reqStream = await req.GetRequestStreamAsync())
+                        {
+                            await reqStream.WriteAsync(data, 0, data.Length);
+                            await reqStream.FlushAsync();
+                        }
+
+                        using (var res = (HttpWebResponse) await req.GetResponseAsync())
+                        using (var resStream = res.GetResponseStream())
                         using (var streamReader = new StreamReader(resStream, Encoding.UTF8))
                         {
-                            FinTSMessage = Helper.DecodeFrom64EncodingDefault(streamReader.ReadToEnd());
+                            FinTSMessage = Helper.DecodeFrom64EncodingDefault(await streamReader.ReadToEndAsync());
                         }
+                    }
+                    catch (Exception) when (timeout.IsCancellationRequested)
+                    {
+                        throw new TimeoutException($"Die Bank hat nicht innerhalb von {ResponseTimeout.TotalSeconds:0} Sekunden geantwortet.");
                     }
                 }
 
